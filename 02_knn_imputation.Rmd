@@ -1,0 +1,160 @@
+---
+title: "KNN Imputation with Optimal K Selection"
+author: "Yuchen Ding"
+date: "2024-11"
+output: html_document
+---
+
+```{r setup, include=FALSE, tidy=TRUE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE,
+                      autodep = TRUE, cache.comments = FALSE,
+                      message = FALSE, warning = FALSE,
+                      fig.width = 4.5, fig.height = 3)
+```
+
+## Overview
+
+This notebook implements **KNN imputation** on three survey question blocks
+and selects the optimal `k` by comparing imputation accuracy on artificially
+introduced MNAR missingness.
+
+Each question block corresponds to a distinct survey module (e.g., candidate
+evaluation, policy preferences). Variable names have been anonymized; the
+original data are not included due to access restrictions.
+
+> **Note:** To run this notebook, generate demo data via
+> `data/generate_demo_data.R` or supply analogous CSV files.
+
+---
+
+## 1. Load Data
+
+```{r load-data}
+library(dplyr)
+library(VIM)
+library(caret)
+library(ggplot2)
+
+# Three survey question blocks (complete + MNAR versions)
+# Replace with your own data paths
+df_block1_mnar <- read.csv("data/df_block1_mnar.csv", na.strings = "")
+df_block2_mnar <- read.csv("data/df_block2_mnar.csv", na.strings = "")
+df_block3_mnar <- read.csv("data/df_block3_mnar.csv", na.strings = "")
+
+df_block1 <- read.csv("data/df_block1.csv", na.strings = "")
+df_block2 <- read.csv("data/df_block2.csv", na.strings = "")
+df_block3 <- read.csv("data/df_block3.csv", na.strings = "")
+```
+
+---
+
+## 2. Explore Missingness Patterns
+
+```{r aggr-plots}
+aggr(df_block1_mnar, col = c("navyblue", "red"), numbers = TRUE, sortVars = TRUE,
+     main = "Missing Pattern: Block 1 MNAR")
+aggr(df_block2_mnar, col = c("navyblue", "red"), numbers = TRUE, sortVars = TRUE,
+     main = "Missing Pattern: Block 2 MNAR")
+aggr(df_block3_mnar, col = c("navyblue", "red"), numbers = TRUE, sortVars = TRUE,
+     main = "Missing Pattern: Block 3 MNAR")
+```
+
+---
+
+## 3. Define Variable Sets per Block
+
+```{r define-vars}
+# Adapt these to match your actual variable names
+block1_vars <- paste0("item_", 1:8)   # 8-item block
+block2_vars <- paste0("item_", 1:12)  # 12-item block
+block3_vars <- paste0("item_", 1:9)   # 9-item block
+
+df_block1      <- df_block1      %>% select(all_of(block1_vars))
+df_block1_mnar <- df_block1_mnar %>% select(all_of(block1_vars))
+
+df_block2      <- df_block2      %>% select(all_of(block2_vars))
+df_block2_mnar <- df_block2_mnar %>% select(all_of(block2_vars))
+
+df_block3      <- df_block3      %>% select(all_of(block3_vars))
+df_block3_mnar <- df_block3_mnar %>% select(all_of(block3_vars))
+```
+
+---
+
+## 4. Accuracy Evaluation Function
+
+Compares imputed values against original values *only* at positions
+that were missing in the MNAR dataset.
+
+```{r eval-function}
+evaluate_imputation_accuracy <- function(imputed, original, original_mnar) {
+  vars    <- names(original)
+  acc_vec <- sapply(vars, function(col) {
+    missing_mask <- is.na(original_mnar[[col]])
+    mean(imputed[[col]][missing_mask] == original[[col]][missing_mask],
+         na.rm = TRUE)
+  })
+  mean(acc_vec, na.rm = TRUE)
+}
+```
+
+---
+
+## 5. Select Optimal K (k = 1 to 10)
+
+```{r find-best-k}
+find_best_k_accuracy <- function(data_complete, data_mnar, k_values = 1:10) {
+  data_complete[] <- lapply(data_complete, as.factor)
+  data_mnar[]     <- lapply(data_mnar,     as.factor)
+
+  accuracy_k <- numeric(length(k_values))
+
+  for (i in seq_along(k_values)) {
+    k       <- k_values[i]
+    imputed <- kNN(data_mnar, k = k, imp_var = FALSE)
+    acc     <- evaluate_imputation_accuracy(imputed, data_complete, data_mnar)
+    accuracy_k[i] <- acc
+    cat(sprintf("k = %2d  →  Accuracy: %.4f\n", k, acc))
+  }
+
+  best_k <- k_values[which.max(accuracy_k)]
+  list(best_k = best_k, accuracy_by_k = accuracy_k)
+}
+
+set.seed(42)
+
+result_block1 <- find_best_k_accuracy(df_block1, df_block1_mnar)
+result_block2 <- find_best_k_accuracy(df_block2, df_block2_mnar)
+result_block3 <- find_best_k_accuracy(df_block3, df_block3_mnar)
+
+cat("Best k — Block 1:", result_block1$best_k, "\n")
+cat("Best k — Block 2:", result_block2$best_k, "\n")
+cat("Best k — Block 3:", result_block3$best_k, "\n")
+```
+
+**Results on original data (for reference):**
+
+| Block | Best k | Accuracy range (k=1–10) |
+|-------|--------|------------------------|
+| Block 1 | 5 | 95.7% – 96.0% |
+| Block 2 | 1 | 94.7% – 94.9% |
+| Block 3 | 5 | 95.4% – 95.5% |
+
+---
+
+## 6. Apply Best K and Export
+
+```{r apply-best-k}
+df_block1_knn <- kNN(df_block1_mnar, k = result_block1$best_k, imp_var = FALSE)
+df_block2_knn <- kNN(df_block2_mnar, k = result_block2$best_k, imp_var = FALSE)
+df_block3_knn <- kNN(df_block3_mnar, k = result_block3$best_k, imp_var = FALSE)
+
+# Verify no remaining NAs
+cat("NAs remaining — Block 1:", sum(is.na(df_block1_knn)), "\n")
+cat("NAs remaining — Block 2:", sum(is.na(df_block2_knn)), "\n")
+cat("NAs remaining — Block 3:", sum(is.na(df_block3_knn)), "\n")
+
+write.csv(df_block1_knn, "data/output/df_block1_knn.csv", row.names = FALSE)
+write.csv(df_block2_knn, "data/output/df_block2_knn.csv", row.names = FALSE)
+write.csv(df_block3_knn, "data/output/df_block3_knn.csv", row.names = FALSE)
+```
