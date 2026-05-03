@@ -1,0 +1,123 @@
+---
+title: "Multiple Imputation via MICE"
+author: "Yuchen Ding, Angelina Lu"
+date: "2024-10"
+output: html_document
+---
+
+```{r setup, include=FALSE, tidy=TRUE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE,
+                      autodep = TRUE, cache.comments = FALSE,
+                      message = FALSE, warning = FALSE,
+                      fig.width = 4.5, fig.height = 3)
+```
+
+## Overview
+
+This notebook implements **Multiple Imputation by Chained Equations (MICE)**
+on a 2024 U.S. presidential election survey dataset with simulated MNAR
+(Missing Not At Random) missingness patterns.
+
+Three data conditions are compared:
+
+| Dataset       | Description                                      |
+|---------------|--------------------------------------------------|
+| `df_self_mnar` | Self-reported missingness pattern (MNAR)        |
+| `df_cross_mnar`| Cross-item missingness pattern (MNAR)           |
+| `df_cleaned`   | Complete-case baseline                          |
+
+> **Note:** Original survey data are not included in this repository
+> (restricted access). The scripts below are designed to run on
+> analogous data with the same structure. See `data/generate_demo_data.R`
+> to create a compatible synthetic dataset.
+
+---
+
+## 1. Load Data
+
+```{r load-data}
+# Replace paths with your own data location
+# Demo data can be generated via data/generate_demo_data.R
+df_self_mnar  <- read.csv("data/df_self_mnar.csv",  na.strings = "")
+df_cross_mnar <- read.csv("data/df_cross_mnar.csv", na.strings = "")
+df_cleaned    <- read.csv("data/df_cleaned.csv",    na.strings = "")
+```
+
+---
+
+## 2. Explore Missingness
+
+```{r explore-missing}
+library(VIM)
+
+missing_counts_self_mnar  <- sort(colSums(is.na(df_self_mnar)),  decreasing = TRUE)
+missing_counts_cross_mnar <- sort(colSums(is.na(df_cross_mnar)), decreasing = TRUE)
+missing_counts_cleaned    <- sort(colSums(is.na(df_cleaned)),    decreasing = TRUE)
+
+print(missing_counts_self_mnar)
+print(missing_counts_cross_mnar)
+print(missing_counts_cleaned)
+```
+
+```{r aggr-plots}
+aggr(df_self_mnar,  col = c("navyblue", "red"), numbers = TRUE, sortVars = TRUE,
+     main = "Missing Pattern: Self MNAR")
+aggr(df_cross_mnar, col = c("navyblue", "red"), numbers = TRUE, sortVars = TRUE,
+     main = "Missing Pattern: Cross MNAR")
+aggr(df_cleaned,    col = c("navyblue", "red"), numbers = TRUE, sortVars = TRUE,
+     main = "Missing Pattern: Cleaned")
+```
+
+---
+
+## 3. MICE Imputation (PMM)
+
+Predictive Mean Matching (`pmm`) is used with `m = 5` imputed datasets
+and `maxit = 5` iterations.
+
+```{r mice-impute}
+library(mice)
+
+imp_self_mnar  <- mice(df_self_mnar,  m = 5, method = "pmm", maxit = 5, seed = 123)
+imp_cross_mnar <- mice(df_cross_mnar, m = 5, method = "pmm", maxit = 5, seed = 123)
+imp_cleaned    <- mice(df_cleaned,    m = 5, method = "pmm", maxit = 5, seed = 123)
+```
+
+```{r mice-summary}
+summary(imp_self_mnar)
+summary(imp_cross_mnar)
+summary(imp_cleaned)
+```
+
+---
+
+## 4. Export Completed Datasets
+
+```{r export}
+library(dplyr)
+
+df_self_mnar_MI  <- complete(imp_self_mnar,  include = TRUE)
+df_cross_mnar_MI <- complete(imp_cross_mnar, include = TRUE)
+df_cleaned_MI    <- complete(imp_cleaned,    include = TRUE)
+
+write.csv(df_self_mnar_MI,  "data/output/df_self_mnar_MI.csv",  row.names = FALSE)
+write.csv(df_cross_mnar_MI, "data/output/df_cross_mnar_MI.csv", row.names = FALSE)
+write.csv(df_cleaned_MI,    "data/output/df_cleaned_MI.csv",    row.names = FALSE)
+```
+
+---
+
+## 5. Visual Comparison: MICE vs KNN
+
+```{r compare-plot}
+library(ggplot2)
+
+mi_self_mnar  <- complete(imp_self_mnar)
+# knn_self_mnar loaded from 02_knn_imputation.Rmd output
+
+# Example: compare distribution of a target variable
+# Replace `target_var` with your variable of interest
+# ggplot(mi_self_mnar, aes(x = target_var)) +
+#   geom_density(fill = "blue", alpha = 0.4) +
+#   labs(title = "Density of MICE Imputation", x = "Values", y = "Density")
+```
